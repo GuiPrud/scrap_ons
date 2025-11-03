@@ -356,19 +356,97 @@ def extract_powerbi_visuals(driver):
         return None
 
 
-def extract_all_pages_data(driver, max_pages=10):
+def get_user_page_selection():
     """
-    Extrai dados de todas as páginas do Power BI
+    Solicita ao usuário qual(is) página(s) extrair
+    Retorna: (modo, paginas_especificas)
+        modo: 'all', 'specific', 'range'
+        paginas_especificas: lista de números de páginas ou None
     """
     print("\n" + "="*70)
-    print("  EXTRAÇÃO DE MÚLTIPLAS PÁGINAS")
+    print("  SELEÇÃO DE PÁGINAS PARA EXTRAÇÃO")
+    print("="*70)
+    print("\nEscolha qual(is) página(s) você deseja extrair:")
+    print("  1. Extrair TODAS as páginas")
+    print("  2. Extrair página(s) específica(s)")
+    print("  3. Extrair um intervalo de páginas")
+    print("="*70)
+    
+    while True:
+        try:
+            choice = input("\nDigite sua escolha (1, 2 ou 3): ").strip()
+            
+            if choice == '1':
+                print("✓ Modo selecionado: TODAS as páginas")
+                return ('all', None)
+            
+            elif choice == '2':
+                pages_input = input("\nDigite o(s) número(s) da(s) página(s) separados por vírgula (ex: 1,3,5): ").strip()
+                pages = [int(p.strip()) for p in pages_input.split(',') if p.strip().isdigit()]
+                
+                if not pages:
+                    print("❌ Nenhuma página válida informada. Tente novamente.")
+                    continue
+                
+                pages = sorted(list(set(pages)))  # Remove duplicatas e ordena
+                print(f"✓ Páginas selecionadas: {', '.join(map(str, pages))}")
+                return ('specific', pages)
+            
+            elif choice == '3':
+                start = input("\nDigite a página inicial: ").strip()
+                end = input("Digite a página final: ").strip()
+                
+                if not (start.isdigit() and end.isdigit()):
+                    print("❌ Valores inválidos. Tente novamente.")
+                    continue
+                
+                start_page = int(start)
+                end_page = int(end)
+                
+                if start_page < 1 or end_page < start_page:
+                    print("❌ Intervalo inválido. Tente novamente.")
+                    continue
+                
+                pages = list(range(start_page, end_page + 1))
+                print(f"✓ Intervalo selecionado: páginas {start_page} a {end_page}")
+                return ('range', pages)
+            
+            else:
+                print("❌ Opção inválida. Digite 1, 2 ou 3.")
+        
+        except ValueError:
+            print("❌ Entrada inválida. Tente novamente.")
+        except KeyboardInterrupt:
+            print("\n\n❌ Operação cancelada pelo usuário.")
+            return (None, None)
+
+
+def extract_all_pages_data(driver, max_pages=10, mode='all', target_pages=None):
+    """
+    Extrai dados de todas as páginas do Power BI ou páginas específicas
+    
+    Args:
+        driver: Selenium WebDriver
+        max_pages: Número máximo de páginas a navegar (para modo 'all')
+        mode: 'all' (todas), 'specific' (específicas), 'range' (intervalo)
+        target_pages: Lista de páginas a extrair (para modes 'specific' e 'range')
+    """
+    print("\n" + "="*70)
+    if mode == 'all':
+        print("  EXTRAÇÃO DE TODAS AS PÁGINAS")
+    elif mode == 'specific' and target_pages:
+        print(f"  EXTRAÇÃO DE PÁGINAS ESPECÍFICAS: {', '.join(map(str, target_pages))}")
+    elif mode == 'range' and target_pages:
+        print(f"  EXTRAÇÃO DE INTERVALO: páginas {min(target_pages)} a {max(target_pages)}")
     print("="*70)
     
     all_data = {
         'pages': [],
         'total_tables': 0,
         'total_cards': 0,
-        'total_charts': 0
+        'total_charts': 0,
+        'mode': mode,
+        'target_pages': target_pages
     }
     
     page_count = 1
@@ -378,19 +456,44 @@ def extract_all_pages_data(driver, max_pages=10):
         print(f"  PÁGINA {page_count}")
         print(f"{'='*70}")
         
-        # Extrai dados da página atual
-        page_data = extract_powerbi_visuals(driver)
+        # Verifica se deve extrair esta página
+        should_extract = False
         
-        if page_data:
-            page_data['page_number'] = page_count
-            all_data['pages'].append(page_data)
+        if mode == 'all':
+            should_extract = True
+        elif mode in ['specific', 'range'] and target_pages:
+            should_extract = page_count in target_pages
+        
+        if should_extract:
+            print("  ✓ Extraindo dados desta página...")
+            # Extrai dados da página atual
+            page_data = extract_powerbi_visuals(driver)
             
-            all_data['total_tables'] += len(page_data.get('tables', []))
-            all_data['total_cards'] += len(page_data.get('cards', []))
-            all_data['total_charts'] += len(page_data.get('charts', []))
+            if page_data:
+                page_data['page_number'] = page_count
+                all_data['pages'].append(page_data)
+                
+                all_data['total_tables'] += len(page_data.get('tables', []))
+                all_data['total_cards'] += len(page_data.get('cards', []))
+                all_data['total_charts'] += len(page_data.get('charts', []))
+        else:
+            print("  ⊘ Pulando esta página (não selecionada)")
+        
+        # Verifica se deve continuar navegando
+        should_continue = False
+        
+        if mode == 'all' and page_count < max_pages:
+            should_continue = True
+        elif mode in ['specific', 'range'] and target_pages:
+            # Continua se ainda há páginas a extrair
+            remaining_pages = [p for p in target_pages if p > page_count]
+            if remaining_pages:
+                should_continue = True
+                next_target = min(remaining_pages)
+                print(f"\n  ℹ️  Próxima página alvo: {next_target}")
         
         # Tenta ir para próxima página
-        if page_count < max_pages:
+        if should_continue:
             print(f"\n➡️  Tentando navegar para página {page_count + 1}...")
             
             try:
@@ -453,7 +556,18 @@ def extract_all_pages_data(driver, max_pages=10):
     print(f"\n{'='*70}")
     print(f"  RESUMO DA EXTRAÇÃO")
     print(f"{'='*70}")
+    
+    if mode == 'all':
+        print(f"  • Modo: TODAS as páginas")
+    elif mode == 'specific' and target_pages:
+        print(f"  • Modo: Páginas específicas ({', '.join(map(str, target_pages))})")
+    elif mode == 'range' and target_pages:
+        print(f"  • Modo: Intervalo (páginas {min(target_pages)} a {max(target_pages)})")
+    
     print(f"  • Total de páginas extraídas: {len(all_data['pages'])}")
+    if all_data['pages']:
+        extracted_pages = [p['page_number'] for p in all_data['pages']]
+        print(f"  • Páginas extraídas: {', '.join(map(str, extracted_pages))}")
     print(f"  • Total de tabelas: {all_data['total_tables']}")
     print(f"  • Total de cards/KPIs: {all_data['total_cards']}")
     print(f"  • Total de gráficos: {all_data['total_charts']}")
@@ -700,17 +814,24 @@ def main():
             f.write(driver.page_source)
         print(f"📄 HTML salvo: {html_file}")
         
-        # Extrai dados de TODAS as páginas
+        # Solicita seleção de páginas ao usuário
+        mode, target_pages = get_user_page_selection()
+        
+        if mode is None:
+            print("\n❌ Extração cancelada.")
+            return
+        
+        # Extrai dados das páginas selecionadas
         print("\n" + "="*70)
-        print("  INICIANDO EXTRAÇÃO DE MÚLTIPLAS PÁGINAS")
+        print("  INICIANDO EXTRAÇÃO")
         print("="*70)
         print("  ℹ️  O script irá:")
-        print("  1. Extrair dados da página atual")
-        print("  2. Clicar no botão 'Próxima Página'")
-        print("  3. Repetir até não haver mais páginas")
+        print("  1. Extrair dados da(s) página(s) selecionada(s)")
+        print("  2. Navegar entre páginas conforme necessário")
+        print("  3. Salvar os dados extraídos")
         print("="*70)
         
-        data = extract_all_pages_data(driver, max_pages=20)
+        data = extract_all_pages_data(driver, max_pages=20, mode=mode, target_pages=target_pages)
         
         if data and data.get('pages'):
             # Salva screenshot da última página

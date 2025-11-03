@@ -216,14 +216,16 @@ def extract_powerbi_visuals(driver):
             
             // Headers
             table.querySelectorAll('th').forEach(th => {
-                tableData.headers.push(th.innerText.trim());
+                const text = th.innerText || th.textContent || '';
+                tableData.headers.push(text.trim());
             });
             
             // Rows
             table.querySelectorAll('tr').forEach(tr => {
                 let cells = [];
                 tr.querySelectorAll('td').forEach(td => {
-                    cells.push(td.innerText.trim());
+                    const text = td.innerText || td.textContent || '';
+                    cells.push(text.trim());
                 });
                 if (cells.length > 0) {
                     tableData.rows.push(cells);
@@ -247,13 +249,17 @@ def extract_powerbi_visuals(driver):
         
         cardSelectors.forEach(selector => {
             document.querySelectorAll(selector).forEach((card, idx) => {
-                let text = card.innerText.trim();
-                if (text && text.length > 0 && text.length < 500) {
-                    results.cards.push({
-                        selector: selector,
-                        index: idx,
-                        text: text
-                    });
+                try {
+                    const text = (card.innerText || card.textContent || '').trim();
+                    if (text && text.length > 0 && text.length < 500) {
+                        results.cards.push({
+                            selector: selector,
+                            index: idx,
+                            text: text
+                        });
+                    }
+                } catch (e) {
+                    console.error('Erro ao processar card:', e);
                 }
             });
         });
@@ -265,27 +271,32 @@ def extract_powerbi_visuals(driver):
         );
         
         visualContainers.forEach((container, idx) => {
-            // Procura por labels e valores
-            let labels = [];
-            let values = [];
-            
-            container.querySelectorAll('[class*="label"], [class*="axisLabel"]').forEach(label => {
-                let text = label.textContent.trim();
-                if (text) labels.push(text);
-            });
-            
-            container.querySelectorAll('[class*="value"], [class*="data"]').forEach(val => {
-                let text = val.textContent.trim();
-                if (text) values.push(text);
-            });
-            
-            if (labels.length > 0 || values.length > 0) {
-                results.charts.push({
-                    index: idx,
-                    labels: labels,
-                    values: values,
-                    combined: container.innerText.trim().substring(0, 1000)
+            try {
+                // Procura por labels e valores
+                let labels = [];
+                let values = [];
+                
+                container.querySelectorAll('[class*="label"], [class*="axisLabel"]').forEach(label => {
+                    const text = (label.textContent || label.innerText || '').trim();
+                    if (text) labels.push(text);
                 });
+                
+                container.querySelectorAll('[class*="value"], [class*="data"]').forEach(val => {
+                    const text = (val.textContent || val.innerText || '').trim();
+                    if (text) values.push(text);
+                });
+                
+                if (labels.length > 0 || values.length > 0) {
+                    const combinedText = (container.innerText || container.textContent || '').trim();
+                    results.charts.push({
+                        index: idx,
+                        labels: labels,
+                        values: values,
+                        combined: combinedText.substring(0, 1000)
+                    });
+                }
+            } catch (e) {
+                console.error('Erro ao processar visual container:', e);
             }
         });
         
@@ -293,26 +304,35 @@ def extract_powerbi_visuals(driver):
         console.log('Procurando elementos SVG...');
         const svgs = document.querySelectorAll('svg');
         svgs.forEach((svg, idx) => {
-            let textElements = [];
-            svg.querySelectorAll('text').forEach(text => {
-                let content = text.textContent.trim();
-                if (content) textElements.push(content);
-            });
-            
-            if (textElements.length > 0) {
-                results.charts.push({
-                    index: `svg_${idx}`,
-                    type: 'svg',
-                    texts: textElements
+            try {
+                let textElements = [];
+                svg.querySelectorAll('text').forEach(text => {
+                    const content = (text.textContent || text.innerText || '').trim();
+                    if (content) textElements.push(content);
                 });
+                
+                if (textElements.length > 0) {
+                    results.charts.push({
+                        index: `svg_${idx}`,
+                        type: 'svg',
+                        texts: textElements
+                    });
+                }
+            } catch (e) {
+                console.error('Erro ao processar SVG:', e);
             }
         });
         
         // 5. TEXTO RAW (fallback)
-        const allText = document.body.innerText;
-        results.raw_text = allText.split('\\n')
-            .map(line => line.trim())
-            .filter(line => line.length > 0);
+        try {
+            const allText = document.body.innerText || document.body.textContent || '';
+            results.raw_text = allText.split('\\n')
+                .map(line => line.trim())
+                .filter(line => line.length > 0);
+        } catch (e) {
+            console.error('Erro ao processar texto raw:', e);
+            results.raw_text = [];
+        }
         
         return results;
     }

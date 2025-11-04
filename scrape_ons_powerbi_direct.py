@@ -186,7 +186,301 @@ def navigate_powerbi_pages(driver, max_pages=10):
     
     print(f"\n✓ Total de páginas navegadas: {page_count}")
     return page_count
-
+def extract_specific_class_data(driver, target_class=None, additional_selectors=None):
+    """
+    Extrai todos os dados de elementos com uma classe específica
+    Versão genérica para uso com qualquer classe CSS
+    
+    Args:
+        driver: Selenium WebDriver
+        target_class: String com a classe CSS a ser buscada (ex: 'column setFocusRing')
+        additional_selectors: Lista de seletores CSS adicionais para buscar
+    """
+    # Define classe padrão se não especificada
+    if target_class is None:
+        target_class = 'column setFocusRing'
+    
+    # Define seletores adicionais se não especificados
+    if additional_selectors is None:
+        additional_selectors = []
+    
+    print(f"\n🎯 Extraindo dados de elementos com classe: '{target_class}'")
+    if additional_selectors:
+        print(f"   + Seletores adicionais: {additional_selectors}")
+    
+    # Script JavaScript para extrair dados específicos da classe
+    js_extraction = f"""
+    function extractSpecificClassData() {{
+        let results = {{
+            target_class: '{target_class}',
+            additional_selectors: {additional_selectors},
+            elements: [],
+            summary: {{
+                total_elements: 0,
+                elements_with_text: 0,
+                unique_texts: new Set()
+            }}
+        }};
+        
+        console.log('Procurando elementos com classe: "{target_class}"...');
+        
+        // Constrói seletores baseados na classe target
+        let selectors = [];
+        
+        // Seletor principal - converte espacos em pontos para CSS
+        const mainClass = '{target_class}'.replace(/\\s+/g, '.');
+        selectors.push('.' + mainClass);
+        
+        // Seletor alternativo com [class*=]
+        selectors.push('[class*="{target_class}"]');
+        
+        // Adiciona seletores extras se fornecidos
+        const additionalSelectors = {additional_selectors};
+        if (Array.isArray(additionalSelectors)) {{
+            selectors = selectors.concat(additionalSelectors);
+        }}
+        
+        console.log('Seletores a serem testados:', selectors);
+        
+        let allElements = new Set(); // Para evitar duplicatas
+        
+        // Busca usando cada seletor
+        selectors.forEach((selector, selectorIndex) => {{
+            try {{
+                const elements = document.querySelectorAll(selector);
+                console.log(`Seletor "${{selector}}": ${{elements.length}} elementos encontrados`);
+                
+                elements.forEach(element => {{
+                    allElements.add(element);
+                }});
+            }} catch (e) {{
+                console.warn(`Erro com seletor "${{selector}}":`, e);
+            }}
+        }});
+        
+        const uniqueElements = Array.from(allElements);
+        console.log(`Total de elementos únicos encontrados: ${{uniqueElements.length}}`);
+        
+        uniqueElements.forEach((element, index) => {{
+            try {{
+                let elementData = {{
+                    index: index,
+                    text_content: '',
+                    inner_text: '',
+                    attributes: {{}},
+                    children_data: [],
+                    position: null,
+                    size: null,
+                    matched_by_selector: null
+                }};
+                
+                // Identifica qual seletor capturou este elemento
+                selectors.forEach(selector => {{
+                    try {{
+                        if (element.matches(selector)) {{
+                            elementData.matched_by_selector = selector;
+                        }}
+                    }} catch (e) {{
+                        // Ignora erros de seletor inválido
+                    }}
+                }});
+                
+                // Extrai texto principal
+                elementData.text_content = (element.textContent || '').trim();
+                elementData.inner_text = (element.innerText || '').trim();
+                
+                // Extrai atributos importantes
+                const importantAttrs = ['class', 'id', 'aria-label', 'title', 'data-testid', 'role', 'data-*'];
+                importantAttrs.forEach(attr => {{
+                    if (attr === 'data-*') {{
+                        // Captura todos os atributos data-*
+                        Array.from(element.attributes).forEach(attribute => {{
+                            if (attribute.name.startsWith('data-')) {{
+                                elementData.attributes[attribute.name] = attribute.value;
+                            }}
+                        }});
+                    }} else {{
+                        const value = element.getAttribute(attr);
+                        if (value) {{
+                            elementData.attributes[attr] = value;
+                        }}
+                    }}
+                }});
+                
+                // Extrai posição e tamanho
+                try {{
+                    const rect = element.getBoundingClientRect();
+                    elementData.position = {{
+                        x: Math.round(rect.x),
+                        y: Math.round(rect.y)
+                    }};
+                    elementData.size = {{
+                        width: Math.round(rect.width),
+                        height: Math.round(rect.height)
+                    }};
+                }} catch (e) {{
+                    console.warn('Erro ao obter posição/tamanho:', e);
+                }}
+                
+                // Extrai dados dos filhos diretos
+                Array.from(element.children).forEach((child, childIndex) => {{
+                    try {{
+                        let childData = {{
+                            index: childIndex,
+                            tag: child.tagName.toLowerCase(),
+                            text: (child.textContent || '').trim(),
+                            classes: child.className || '',
+                            attributes: {{}}
+                        }};
+                        
+                        // Atributos importantes dos filhos
+                        importantAttrs.forEach(attr => {{
+                            if (attr === 'data-*') {{
+                                Array.from(child.attributes).forEach(attribute => {{
+                                    if (attribute.name.startsWith('data-')) {{
+                                        childData.attributes[attribute.name] = attribute.value;
+                                    }}
+                                }});
+                            }} else {{
+                                const value = child.getAttribute(attr);
+                                if (value) {{
+                                    childData.attributes[attr] = value;
+                                }}
+                            }}
+                        }});
+                        
+                        // Dados específicos por tipo de elemento
+                        if (child.tagName.toLowerCase() === 'span') {{
+                            childData.span_specific = {{
+                                inner_html: child.innerHTML || '',
+                                computed_style: null
+                            }};
+                            
+                            try {{
+                                const style = window.getComputedStyle(child);
+                                childData.span_specific.computed_style = {{
+                                    color: style.color,
+                                    fontSize: style.fontSize,
+                                    fontWeight: style.fontWeight,
+                                    display: style.display
+                                }};
+                            }} catch (e) {{
+                                console.warn('Erro ao obter estilo computado:', e);
+                            }}
+                        }}
+                        
+                        if (child.tagName.toLowerCase() === 'div') {{
+                            childData.div_specific = {{
+                                inner_html: child.innerHTML || '',
+                                child_count: child.children.length
+                            }};
+                        }}
+                        
+                        if (child.tagName.toLowerCase() === 'table') {{
+                            childData.table_specific = {{
+                                rows: child.rows ? child.rows.length : 0,
+                                cells: child.cells ? child.cells.length : 0
+                            }};
+                        }}
+                        
+                        elementData.children_data.push(childData);
+                        
+                    }} catch (e) {{
+                        console.error(`Erro ao processar filho ${{childIndex}}:`, e);
+                    }}
+                }});
+                
+                // Procura por dados numéricos/texto específico
+                elementData.extracted_values = {{
+                    numbers: [],
+                    percentages: [],
+                    currencies: [],
+                    dates: [],
+                    times: [],
+                    other_text: []
+                }};
+                
+                const allText = elementData.text_content;
+                if (allText) {{
+                    // Números (incluindo decimais e separadores)
+                    const numbers = allText.match(/\\b\\d+([.,]\\d+)*\\b/g) || [];
+                    elementData.extracted_values.numbers = numbers;
+                    
+                    // Porcentagens
+                    const percentages = allText.match(/\\b\\d+([.,]\\d+)*\\s*%/g) || [];
+                    elementData.extracted_values.percentages = percentages;
+                    
+                    // Moedas (R$, $, €, etc.)
+                    const currencies = allText.match(/[R$€£¥]\\s*\\d+([.,]\\d+)*/g) || [];
+                    elementData.extracted_values.currencies = currencies;
+                    
+                    // Datas (formatos comuns)
+                    const dates = allText.match(/\\b\\d{{1,2}}[\\/\\\\\\-.:]\\d{{1,2}}[\\/\\\\\\-.:]\\d{{2,4}}\\b/g) || [];
+                    elementData.extracted_values.dates = dates;
+                    
+                    // Horários
+                    const times = allText.match(/\\b\\d{{1,2}}:\\d{{2}}(:\\d{{2}})?\\s*(AM|PM)?\\b/gi) || [];
+                    elementData.extracted_values.times = times;
+                    
+                    // Texto não numérico
+                    const textOnly = allText.replace(/[\\d.,%-]/g, '').trim();
+                    if (textOnly) {{
+                        elementData.extracted_values.other_text.push(textOnly);
+                    }}
+                }}
+                
+                // Adiciona aos resultados
+                results.elements.push(elementData);
+                
+                // Atualiza sumário
+                if (elementData.text_content) {{
+                    results.summary.elements_with_text++;
+                    results.summary.unique_texts.add(elementData.text_content);
+                }}
+                
+            }} catch (e) {{
+                console.error(`Erro ao processar elemento ${{index}}:`, e);
+            }}
+        }});
+        
+        results.summary.total_elements = results.elements.length;
+        results.summary.unique_texts = Array.from(results.summary.unique_texts);
+        
+        return results;
+    }}
+    
+    return extractSpecificClassData();
+    """
+    
+    try:
+        data = driver.execute_script(js_extraction)
+        
+        print(f"✓ Processamento concluído:")
+        print(f"  • Classe alvo: '{target_class}'")
+        print(f"  • Total de elementos encontrados: {data['summary']['total_elements']}")
+        print(f"  • Elementos com texto: {data['summary']['elements_with_text']}")
+        print(f"  • Textos únicos: {len(data['summary']['unique_texts'])}")
+        
+        # Mostra preview dos primeiros elementos
+        if data['elements']:
+            print(f"\n📋 Preview dos primeiros elementos:")
+            for i, element in enumerate(data['elements'][:5]):
+                print(f"  {i+1}. Texto: {element['text_content'][:100]}{'...' if len(element['text_content']) > 100 else ''}")
+                if element.get('matched_by_selector'):
+                    print(f"     Seletor: {element['matched_by_selector']}")
+                if element['extracted_values']['numbers']:
+                    print(f"     Números: {element['extracted_values']['numbers']}")
+                if element['extracted_values']['percentages']:
+                    print(f"     Porcentagens: {element['extracted_values']['percentages']}")
+                if element['children_data']:
+                    print(f"     Filhos: {len(element['children_data'])} elemento(s)")
+                print()
+        
+        return data
+        
+    except Exception as e:
+        print(f"❌ Erro ao executar extração: {e}")
+        return None
 
 def extract_powerbi_visuals(driver):
     """
@@ -467,7 +761,7 @@ def extract_all_pages_data(driver, max_pages=10, mode='all', target_pages=None):
         if should_extract:
             print("  ✓ Extraindo dados desta página...")
             # Extrai dados da página atual
-            page_data = extract_powerbi_visuals(driver)
+            page_data = extract_specific_class_data(driver, target_class='label-tspan')
             
             if page_data:
                 page_data['page_number'] = page_count

@@ -666,6 +666,8 @@ def extract_all_pages_data(driver, max_pages=10, mode='all', target_pages=None):
         
         if should_extract:
             print("  ✓ Extraindo dados desta página...")
+            select_date_in_powerbi_calendar(driver, target_date="01/10/2021", date_type="início")
+
             # Extrai dados da página atual
             page_data = extract_specific_class_data(driver, target_class='column setFocusRing')
             
@@ -942,6 +944,138 @@ def save_data(data, prefix="powerbi", output_folder="."):
     
     return saved_files
 
+def select_date_in_powerbi_calendar(driver, target_date="01/10/2021", date_type="início"):
+    """
+    Seleciona uma data específica no calendário do Power BI
+    
+    Args:
+        driver: Selenium WebDriver
+        target_date: Data no formato DD/MM/AAAA
+        date_type: Tipo de data ('início' ou 'fim') para identificar o slicer correto
+    """
+    print(f"\n📅 Selecionando data {target_date} ({date_type})...")
+    
+    try:
+        # Parse da data
+        from datetime import datetime
+        date_obj = datetime.strptime(target_date, "%d/%m/%Y")
+        day = date_obj.day
+        month = date_obj.month
+        year = date_obj.year
+        
+        print(f"  • Data parseada: {day:02d}/{month:02d}/{year}")
+        
+        # 1. Encontra o input de data específico
+        wait = WebDriverWait(driver, 10)
+        
+        # Seletores para encontrar o input de data correto
+        date_input_selectors = [
+            f"//input[contains(@aria-label, 'Data de {date_type}')]",
+            f"//input[contains(@aria-label, '{date_type}') and contains(@class, 'date-slicer-datepicker')]",
+            "//input[contains(@class, 'date-slicer-datepicker') and contains(@aria-label, 'Data de início')]",
+            "//input[contains(@class, 'item-fill ng-valid date-slicer-datepicker')]"
+        ]
+        
+        date_input = None
+        for selector in date_input_selectors:
+            try:
+                elements = driver.find_elements(By.XPATH, selector)
+                if elements:
+                    date_input = elements[0]
+                    aria_label = date_input.get_attribute('aria-label') or ''
+                    print(f"  ✓ Date input encontrado: {aria_label[:50]}...")
+                    break
+            except:
+                continue
+        
+        if not date_input:
+            print("  ❌ Date input não encontrado")
+            return False
+        
+        # 2. Limpa o campo e insere a nova data
+        print(f"  • Definindo data para {target_date}...")
+        
+        # Scroll até o elemento
+        driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", date_input)
+        time.sleep(0.5)
+        
+        # Limpa o campo atual
+        date_input.clear()
+        time.sleep(0.3)
+        
+        # Insere a nova data
+        date_input.send_keys(target_date)
+        time.sleep(0.5)
+        
+        # Dispara evento de mudança para garantir que o Power BI processe
+        driver.execute_script("""
+            var event = new Event('input', { bubbles: true });
+            arguments[0].dispatchEvent(event);
+            
+            var changeEvent = new Event('change', { bubbles: true });
+            arguments[0].dispatchEvent(changeEvent);
+            
+            var blurEvent = new Event('blur', { bubbles: true });
+            arguments[0].dispatchEvent(blurEvent);
+        """, date_input)
+        
+        time.sleep(1)
+        
+        # Verifica se a data foi definida corretamente
+        current_value = date_input.get_attribute('value')
+        print(f"  • Valor atual do campo: '{current_value}'")
+        
+        if current_value == target_date:
+            print(f"  ✅ Data {target_date} definida com sucesso!")
+            
+            # Aguarda o Power BI processar a mudança
+            print("  ⏳ Aguardando Power BI processar a mudança...")
+            time.sleep(3)
+            
+            return True
+        else:
+            print(f"  ⚠️  Data definida mas valor diferente: '{current_value}' != '{target_date}'")
+            
+            # Tenta abordagem alternativa com JavaScript direto
+            print("  • Tentando abordagem alternativa com JavaScript...")
+            
+            driver.execute_script(f"""
+                arguments[0].value = '{target_date}';
+                arguments[0].setAttribute('value', '{target_date}');
+                
+                // Dispara múltiplos eventos para garantir detecção
+                ['input', 'change', 'blur', 'keyup'].forEach(eventType => {{
+                    var event = new Event(eventType, {{ bubbles: true, cancelable: true }});
+                    arguments[0].dispatchEvent(event);
+                }});
+                
+                // Força atualização Angular/React se existir
+                if (window.angular) {{
+                    var scope = window.angular.element(arguments[0]).scope();
+                    if (scope) {{
+                        scope.$apply();
+                    }}
+                }}
+            """, date_input)
+            
+            time.sleep(2)
+            
+            # Verifica novamente
+            new_value = date_input.get_attribute('value')
+            if new_value == target_date:
+                print(f"  ✅ Data {target_date} definida com JavaScript!")
+                time.sleep(3)
+                return True
+            else:
+                print(f"  ❌ Falha ao definir data. Valor final: '{new_value}'")
+                return False
+        
+    except Exception as e:
+        print(f"  ❌ Erro ao selecionar data: {e}")
+        import traceback
+        print(f"  Detalhes: {traceback.format_exc()}")
+        return False
+
 
 def main():
     """Função principal"""
@@ -967,7 +1101,25 @@ def main():
         # Aguarda carregar
         wait_for_powerbi_load(driver, timeout=60)
         
-        # Salva screenshot da primeira página
+        # NOVO: Seleciona data no calendário ANTES de extrair dados
+        print("\n" + "="*70)
+        print("  CONFIGURANDO FILTROS DE DATA")
+        print("="*70)
+        
+        # Seleciona data de início
+        if select_date_in_powerbi_calendar(driver, target_date="01/10/2021", date_type="início"):
+            print("✅ Data de início configurada!")
+            
+            # Aguarda o dashboard atualizar após mudança de filtro
+            print("⏳ Aguardando dashboard atualizar...")
+            time.sleep(5)
+            
+            # Aguarda novamente o carregamento após filtro
+            wait_for_powerbi_load(driver, timeout=30)
+        else:
+            print("⚠️  Falha ao configurar data de início, continuando mesmo assim...")
+        
+        # Salva screenshot da primeira página (APÓS configurar filtros)
         screenshot_file = os.path.join(output_folder, "powerbi_screenshot_page1.png")
         driver.save_screenshot(screenshot_file)
         print(f"\n📸 Screenshot salvo: {screenshot_file}")
@@ -994,7 +1146,7 @@ def main():
         print("  2. Navegar entre páginas conforme necessário")
         print("  3. Salvar os dados extraídos")
         print("="*70)
-        
+
         data = extract_all_pages_data(driver, max_pages=20, mode=mode, target_pages=target_pages)
         
         if data and data.get('pages'):

@@ -1,6 +1,6 @@
 """
-Script otimizado para extrair dados diretamente do Power BI Dashboard da ONS
-Foca especificamente no iframe Power BI identificado
+Script para extrair dados do Power BI Dashboard da ONS
+Acessa primeiro a página da ONS e localiza o iframe do Power BI
 """
 
 import time
@@ -20,9 +20,6 @@ from datetime import datetime
 # URL da página ONS
 PAGE_URL = "https://www.ons.org.br/Paginas/faq_curtailment.aspx"
 
-# URL direta do Power BI (extraída do iframe)
-POWERBI_DIRECT_URL = "https://app.powerbi.com/view?r=eyJrIjoiYmU0ODUxNGMtNWU2MS00YTM5LThkMGYtNWFkYWQzYmU3ZWY2IiwidCI6IjNhZGVlNWZjLTkzM2UtNDkxMS1hZTFiLTljMmZlN2I4NDQ0OCIsImMiOjR9"
-
 
 def create_output_folder():
     """Cria pasta para salvar os arquivos gerados"""
@@ -33,6 +30,68 @@ def create_output_folder():
         print(f"📁 Pasta criada: {folder_name}")
     
     return folder_name
+
+
+def find_powerbi_iframe(driver):
+    """
+    Localiza o iframe do Power BI na página da ONS
+    Retorna a URL do Power BI se encontrada
+    """
+    print("\n🔍 Procurando iframe do Power BI na página da ONS...")
+    
+    try:
+        # Aguarda a página carregar
+        WebDriverWait(driver, 20).until(
+            EC.presence_of_element_located((By.TAG_NAME, "body"))
+        )
+        
+        # Procura por iframes na página
+        iframes = driver.find_elements(By.TAG_NAME, "iframe")
+        print(f"  • Encontrados {len(iframes)} iframe(s) na página")
+        
+        powerbi_url = None
+        
+        for i, iframe in enumerate(iframes):
+            try:
+                # Obtém o src do iframe
+                iframe_src = iframe.get_attribute("src")
+                
+                if iframe_src:
+                    print(f"  • Iframe {i+1}: {iframe_src[:80]}...")
+                    
+                    # Verifica se é um iframe do Power BI
+                    if "powerbi.com" in iframe_src.lower() or "app.powerbi" in iframe_src.lower():
+                        powerbi_url = iframe_src
+                        print(f"  ✅ Power BI encontrado no iframe {i+1}!")
+                        print(f"     URL: {powerbi_url}")
+                        break
+                else:
+                    print(f"  • Iframe {i+1}: sem src")
+                    
+            except Exception as e:
+                print(f"  ⚠️  Erro ao processar iframe {i+1}: {e}")
+        
+        if powerbi_url:
+            return powerbi_url
+        else:
+            print("  ❌ Nenhum iframe do Power BI encontrado")
+            print("  💡 Tentando procurar por outros elementos Power BI...")
+            
+            # Procura por elementos que possam conter links do Power BI
+            powerbi_elements = driver.find_elements(By.XPATH, "//*[contains(@src, 'powerbi') or contains(@href, 'powerbi')]")
+            
+            if powerbi_elements:
+                for elem in powerbi_elements:
+                    src = elem.get_attribute("src") or elem.get_attribute("href")
+                    if src and "powerbi" in src.lower():
+                        print(f"  ✅ Elemento Power BI encontrado: {src}")
+                        return src
+            
+            return None
+            
+    except Exception as e:
+        print(f"  ❌ Erro ao procurar iframe do Power BI: {e}")
+        return None
 
 
 def setup_driver():
@@ -821,7 +880,6 @@ def save_data(data, prefix="powerbi", output_folder="."):
                                 'Página': page_num,
                                 'Serie_Index': series_idx,
                                 'Serie_Label': series_label,
-                                'Serie_Aria_Label': series.get('aria_label', ''),
                                 'Element_Index': element.get('element_index', ''),
                                 'Element_Aria_Label': element.get('aria_label', ''),
                                 'Text_Content': element.get('text_content', ''),
@@ -887,7 +945,7 @@ def save_data(data, prefix="powerbi", output_folder="."):
                 
                 # Estatísticas por série
                 print("📊 Estatísticas por Série:")
-                series_stats = consolidated_df.groupby(['Serie_Label', 'Serie_Aria_Label']).agg({
+                series_stats = consolidated_df.groupby(['Serie_Label']).agg({
                     'Text_Content': 'count',
                     'Element_Aria_Label': lambda x: sum(1 for val in x if val.strip())
                 }).rename(columns={
@@ -1080,7 +1138,7 @@ def select_date_in_powerbi_calendar(driver, target_date="01/10/2021", date_type=
 def main():
     """Função principal"""
     print("="*70)
-    print("  EXTRATOR DE DADOS - POWER BI ONS (MÚLTIPLAS PÁGINAS)")
+    print("  EXTRATOR DE DADOS - POWER BI ONS (VIA PÁGINA ONS)")
     print("="*70)
     
     # Cria pasta para salvar os arquivos
@@ -1092,16 +1150,46 @@ def main():
         return
     
     try:
-        # Acessa diretamente o Power BI
-        print(f"\n🌐 Acessando Power BI diretamente...")
-        print(f"URL: {POWERBI_DIRECT_URL[:60]}...")
+        # Acessa a página da ONS primeiro
+        print(f"\n🌐 Acessando página da ONS...")
+        print(f"URL: {PAGE_URL}")
         
-        driver.get(POWERBI_DIRECT_URL)
+        driver.get(PAGE_URL)
+        
+        # Aguarda a página da ONS carregar
+        print("⏳ Aguardando página da ONS carregar...")
+        time.sleep(5)
+        
+        # Procura pelo iframe do Power BI
+        powerbi_url = find_powerbi_iframe(driver)
+        
+        if not powerbi_url:
+            print("\n❌ Power BI não encontrado na página da ONS!")
+            print("\n🔍 Salvando screenshot e HTML para diagnóstico...")
+            
+            # Salva screenshot para diagnóstico
+            debug_screenshot = os.path.join(output_folder, "debug_ons_page.png")
+            driver.save_screenshot(debug_screenshot)
+            print(f"📸 Screenshot: {debug_screenshot}")
+            
+            # Salva HTML para diagnóstico
+            debug_html = os.path.join(output_folder, "debug_ons_page.html")
+            with open(debug_html, 'w', encoding='utf-8') as f:
+                f.write(driver.page_source)
+            print(f"📄 HTML: {debug_html}")
+            
+            print("\n💡 Verifique os arquivos de diagnóstico para entender a estrutura da página")
+            return
+        
+        # Acessa o Power BI encontrado
+        print(f"\n🌐 Acessando Power BI encontrado...")
+        print(f"URL: {powerbi_url[:80]}...")
+        
+        driver.get(powerbi_url)
         
         # Aguarda carregar
         wait_for_powerbi_load(driver, timeout=60)
         
-        # NOVO: Seleciona data no calendário ANTES de extrair dados
         print("\n" + "="*70)
         print("  CONFIGURANDO FILTROS DE DATA")
         print("="*70)
